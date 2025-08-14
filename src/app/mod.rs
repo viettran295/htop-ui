@@ -10,7 +10,8 @@ use crate::cmd::{list_all_processes, process};
 
 pub struct App {
     exit: bool,
-    items: Vec<process::Process>,    
+    items: Vec<process::Process>,
+    state: TableState,
     last_tick: Instant,
     tx: Sender<Vec<process::Process>>,
     rx: Receiver<Vec<process::Process>>
@@ -24,6 +25,7 @@ impl App {
         Self { 
             exit: false,
             items: Vec::new(),
+            state: TableState::default().with_selected(0),
             last_tick: Instant::now(),
             tx: tx,
             rx: rx
@@ -48,9 +50,14 @@ impl App {
         let timeout = Self::TICK_RATE.saturating_sub(self.last_tick.elapsed());
         while event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press && 
-                    key.code == KeyCode::Char('q') {
-                    self.exit = true;
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => self.exit = true,
+                        KeyCode::Char('j') | KeyCode::Down => self.next_row(),
+                        KeyCode::Char('k') | KeyCode::Up => self.previous_row(),
+                        _ => {}
+                    }
+                    
                 }
             }
         }
@@ -64,37 +71,40 @@ impl App {
     }
     
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-            let header = ["PID", "Name", "User", "CPU %", "Memory %"]
-                .into_iter()
-                .map(Cell::from)
-                .collect::<Row>()
-                .height(1);
+        let selected_row_style = Style::default()
+            .add_modifier(Modifier::REVERSED);
+        let header = ["PID", "Name", "User", "CPU %", "Memory %"]
+            .into_iter()
+            .map(Cell::from)
+            .collect::<Row>()
+            .height(1);
 
-            let rows = self.items.iter().map(|process| {
-                Row::new(vec![
-                    Cell::from(process.pid.to_string()),
-                    Cell::from(process.process_name.to_string()),
-                    Cell::from(process.user.to_string()),
-                    Cell::from(format!("{:.1}%", process.cpu_usage)),
-                    Cell::from(format!("{:.1}%", process.mem_usage)),
-                ])
-            });
+        let rows = self.items.iter().map(|process| {
+            Row::new(vec![
+                Cell::from(process.pid.to_string()),
+                Cell::from(process.process_name.to_string()),
+                Cell::from(process.user.to_string()),
+                Cell::from(format!("{:.1}%", process.cpu_usage)),
+                Cell::from(format!("{:.1}%", process.mem_usage)),
+            ])
+        });
 
-            let t = Table::new(
-                rows,
-                [
-                    Constraint::Length(10),
-                    Constraint::Min(20),
-                    Constraint::Min(15),
-                    Constraint::Length(10),
-                    Constraint::Length(10),
-                ],
-            )
-            .header(header)
-            .block(Block::default().borders(Borders::ALL).title("Processes"));
+        let t = Table::new(
+            rows,
+            [
+                Constraint::Length(10),
+                Constraint::Min(20),
+                Constraint::Min(15),
+                Constraint::Length(10),
+                Constraint::Length(10),
+            ],
+        )
+        .header(header)
+        .row_highlight_style(selected_row_style)
+        .block(Block::default().borders(Borders::ALL).title("Processes"));
 
-            frame.render_widget(t, area);
-        }
+        frame.render_stateful_widget(t, area, &mut self.state);
+    }
     
     fn render_widgets(
         frame: &mut Frame, 
@@ -137,5 +147,33 @@ impl App {
             ])
             .split(main_layout[1]);
         return (main_layout[0], right_side[0], right_side[1]);
+    }
+    
+    fn next_row(&mut self) {
+        let row = match self.state.selected() {
+            Some(row) => {
+                if row >= self.items.len() - 1 {
+                    0
+                } else {
+                    row + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(row));
+    }
+    
+    fn previous_row(&mut self) {
+        let row = match self.state.selected() {
+            Some(row) => {
+                if row == 0 {
+                    self.items.len() - 1
+                } else {
+                    row - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(row));
     }
 }
