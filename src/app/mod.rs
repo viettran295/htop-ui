@@ -30,11 +30,12 @@ impl App {
         }
     }
 
-    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
+    pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
         list_all_processes(self.tx.clone());
         while ! self.exit {
             if let Ok(sys) = self.rx.try_recv(){
                 self.items = sys;
+                process::Process::sort_most_consume_cpu(&mut self.items);
             }
             terminal.draw(|frame| self.ui(frame))?;
             self.handle_events()?;

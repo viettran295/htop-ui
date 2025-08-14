@@ -42,4 +42,10 @@ impl Process {
             mem_usage: self.mem_usage
         })
     }
+    
+    pub fn sort_most_consume_cpu(processes: &mut Vec<Process>) {
+        processes.sort_by(|a, b| b.cpu_usage
+                            .partial_cmp(&a.cpu_usage)
+                            .unwrap_or(std::cmp::Ordering::Equal));
+    }
 }
