@@ -1,5 +1,6 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, widgets::*, DefaultTerminal};
+use indexmap::IndexMap;
 use std::{
     sync::{mpsc::{self, Receiver, Sender}}, 
     thread, 
@@ -10,7 +11,7 @@ use crate::cmd::{list_all_processes, process};
 
 pub struct App {
     exit: bool,
-    items: Vec<process::Process>,
+    items: IndexMap<u32, process::Process>,
     state: TableState,
     last_tick: Instant,
     tx: Sender<Vec<process::Process>>,
@@ -24,7 +25,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         Self { 
             exit: false,
-            items: Vec::new(),
+            items: IndexMap::new(),
             state: TableState::default().with_selected(0),
             last_tick: Instant::now(),
             tx: tx,
@@ -33,20 +34,23 @@ impl App {
     }
 
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
+        let mut processes = Vec::new();
         list_all_processes(self.tx.clone());
+        
         while ! self.exit {
-            if let Ok(sys) = self.rx.try_recv(){
-                self.items = sys;
-                process::Process::sort_most_consume_cpu(&mut self.items);
+            if let Ok(proc) = self.rx.try_recv(){
+                processes = proc;
+                process::Process::sort_most_consume_cpu(&mut processes);
+                self.update_processes(processes);
             }
             terminal.draw(|frame| self.ui(frame))?;
-            self.handle_events()?;
+            self.handle_keyboard_events()?;
             thread::sleep(Duration::from_millis(100));
         }
         Ok(())
     }
     
-    fn handle_events(&mut self) -> Result<(), std::io::Error> {
+    fn handle_keyboard_events(&mut self) -> Result<(), std::io::Error> {
         let timeout = Self::TICK_RATE.saturating_sub(self.last_tick.elapsed());
         while event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
@@ -70,6 +74,12 @@ impl App {
         self.render_table(frame, process_area);
     }
     
+    fn update_processes(&mut self, processes: Vec<process::Process>) {
+        for proc in processes {
+            self.items.insert(proc.pid, proc);
+        }
+    }
+    
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED);
@@ -79,7 +89,7 @@ impl App {
             .collect::<Row>()
             .height(1);
 
-        let rows = self.items.iter().map(|process| {
+        let rows = self.items.iter().map(|(_pid, process)| {
             Row::new(vec![
                 Cell::from(process.pid.to_string()),
                 Cell::from(process.process_name.to_string()),
