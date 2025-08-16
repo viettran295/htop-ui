@@ -14,6 +14,7 @@ struct AppStyle {
     cpu_frame_fg: Color,
     ram_frame_fg: Color,
     selected_row: Color,
+    exceed_threshold_cell: Color,
 }
 
 pub struct App {
@@ -21,6 +22,7 @@ pub struct App {
     items: IndexMap<u32, process::Process>,
     state: TableState,
     style: AppStyle,
+    blink_threshold: bool,
     last_tick: Instant,
     tx: Sender<Vec<process::Process>>,
     rx: Receiver<Vec<process::Process>>
@@ -28,6 +30,9 @@ pub struct App {
 
 impl App {
     const TICK_RATE: Duration = Duration::from_millis(100);
+    const BLINK_THRESHOLD_RATE: Duration = Duration::from_secs(1);
+    const CPU_THRESHOLD: f32 = 20.0;
+    const MEM_THRESHOLD: f32 = 20.0;
     
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
@@ -36,6 +41,7 @@ impl App {
             cpu_frame_fg: tailwind::YELLOW.c300,
             ram_frame_fg: tailwind::PURPLE.c300,
             selected_row: tailwind::ZINC.c100,
+            exceed_threshold_cell: tailwind::PINK.c400
         };
         Self { 
             exit: false,
@@ -43,6 +49,7 @@ impl App {
             state: TableState::default().with_selected(0),
             style: app_style,
             last_tick: Instant::now(),
+            blink_threshold: false,
             tx: tx,
             rx: rx
         }
@@ -59,10 +66,18 @@ impl App {
                 self.update_processes(processes);
             }
             terminal.draw(|frame| self.ui(frame))?;
+            self.handle_tick_threshold();
             self.handle_keyboard_events()?;
             thread::sleep(Duration::from_millis(100));
         }
         Ok(())
+    }
+    
+    fn handle_tick_threshold(&mut self) {
+        if self.last_tick.elapsed() >= Self::BLINK_THRESHOLD_RATE {
+            self.blink_threshold = ! self.blink_threshold;
+            self.last_tick = Instant::now();
+        }
     }
     
     fn handle_keyboard_events(&mut self) -> Result<(), std::io::Error> {
@@ -76,7 +91,6 @@ impl App {
                         KeyCode::Char('k') | KeyCode::Up => self.previous_row(),
                         _ => {}
                     }
-                    
                 }
             }
         }
@@ -95,6 +109,17 @@ impl App {
         }
     }
     
+    fn blink_cell(value: f32, threshold: f32, blink: bool, style: Color) -> Cell<'static> {
+        let exceed_threshold_cell = Style::default()
+            .add_modifier(Modifier::UNDERLINED)
+            .fg(style);
+        if value >= threshold && blink {
+            return Cell::from(format!("{:.1}%", value)).style(exceed_threshold_cell)
+        } else {
+            return Cell::from(format!("{:.1}%", value))
+        }
+    }
+    
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
@@ -104,14 +129,24 @@ impl App {
             .map(Cell::from)
             .collect::<Row>()
             .height(1);
-
+        
         let rows = self.items.iter().map(|(_pid, process)| {
             Row::new(vec![
                 Cell::from(process.pid.to_string()),
                 Cell::from(process.process_name.to_string()),
                 Cell::from(process.user.to_string()),
-                Cell::from(format!("{:.1}%", process.cpu_usage)),
-                Cell::from(format!("{:.1}%", process.mem_usage)),
+                Self::blink_cell(
+                    process.cpu_usage, 
+                    Self::CPU_THRESHOLD, 
+                    self.blink_threshold, 
+                    self.style.exceed_threshold_cell
+                ),
+                Self::blink_cell(
+                    process.mem_usage, 
+                    Self::MEM_THRESHOLD,
+                    self.blink_threshold, 
+                    self.style.exceed_threshold_cell
+                )
             ])
         });
         
@@ -182,7 +217,7 @@ impl App {
         let row = match self.state.selected() {
             Some(row) => {
                 if row >= self.items.len() - 1 {
-                    0
+                    self.items.len() - 1
                 } else {
                     row + 1
                 }
@@ -196,7 +231,7 @@ impl App {
         let row = match self.state.selected() {
             Some(row) => {
                 if row == 0 {
-                    self.items.len() - 1
+                    0
                 } else {
                     row - 1
                 }
