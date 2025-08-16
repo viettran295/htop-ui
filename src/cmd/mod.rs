@@ -24,7 +24,7 @@ pub fn list_all_processes(tx: Sender<Vec<process::Process>>){
                 let user_id = process.user_id().unwrap();
                 let user = users.get_user_by_id(user_id).unwrap().name();
                 mem_usage = (process.memory() as f32 / total_mem as f32) * 100.0;
-                cpu_usage = process.cpu_usage();
+                cpu_usage = process.cpu_usage() / sys.global_cpu_usage();
                 if cpu_usage <= 0.0 || mem_usage <= 0.0 {
                     continue;
                 }

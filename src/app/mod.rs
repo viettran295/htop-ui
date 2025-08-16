@@ -41,7 +41,7 @@ impl App {
             }
             terminal.draw(|frame| self.ui(frame))?;
             self.handle_events()?;
-            thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(100));
         }
         Ok(())
     }
