@@ -1,5 +1,5 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::{prelude::*, widgets::*, DefaultTerminal};
+use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal};
 use indexmap::IndexMap;
 use std::{
     sync::{mpsc::{self, Receiver, Sender}}, 
@@ -9,10 +9,18 @@ use std::{
 
 use crate::cmd::{list_all_processes, process};
 
+struct AppStyle {
+    table_fg: Color,
+    cpu_frame_fg: Color,
+    ram_frame_fg: Color,
+    selected_row: Color,
+}
+
 pub struct App {
     exit: bool,
     items: IndexMap<u32, process::Process>,
     state: TableState,
+    style: AppStyle,
     last_tick: Instant,
     tx: Sender<Vec<process::Process>>,
     rx: Receiver<Vec<process::Process>>
@@ -23,10 +31,17 @@ impl App {
     
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
+        let app_style = AppStyle {
+            table_fg: tailwind::LIME.c200,
+            cpu_frame_fg: tailwind::YELLOW.c300,
+            ram_frame_fg: tailwind::PURPLE.c300,
+            selected_row: tailwind::ZINC.c100,
+        };
         Self { 
             exit: false,
             items: IndexMap::new(),
             state: TableState::default().with_selected(0),
+            style: app_style,
             last_tick: Instant::now(),
             tx: tx,
             rx: rx
@@ -70,7 +85,7 @@ impl App {
     
     fn ui(&mut self, frame: &mut Frame) {
         let (process_area, cpu_area, ram_area) = Self::create_layout(frame);
-        Self::render_widgets(frame, cpu_area, ram_area);
+        self.render_widgets(frame, cpu_area, ram_area);
         self.render_table(frame, process_area);
     }
     
@@ -82,7 +97,8 @@ impl App {
     
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
-            .add_modifier(Modifier::REVERSED);
+            .add_modifier(Modifier::REVERSED)
+            .fg(self.style.selected_row);
         let header = ["PID", "Name", "User", "CPU %", "Memory %"]
             .into_iter()
             .map(Cell::from)
@@ -98,7 +114,7 @@ impl App {
                 Cell::from(format!("{:.1}%", process.mem_usage)),
             ])
         });
-
+        
         let t = Table::new(
             rows,
             [
@@ -110,13 +126,16 @@ impl App {
             ],
         )
         .header(header)
+        .fg(self.style.table_fg)
         .row_highlight_style(selected_row_style)
+        .highlight_spacing(HighlightSpacing::Always)
         .block(Block::default().borders(Borders::ALL).title("Processes"));
 
         frame.render_stateful_widget(t, area, &mut self.state);
     }
     
     fn render_widgets(
+        &mut self,
         frame: &mut Frame, 
         cpu_area: Rect,
         ram_area: Rect
@@ -126,7 +145,7 @@ impl App {
                 .block(Block::new()
                         .title("CPU")
                         .title_alignment(Alignment::Center)
-                        .fg(Color::LightGreen)
+                        .fg(self.style.cpu_frame_fg)
                         .borders(Borders::all())), 
             cpu_area
         );
@@ -135,7 +154,7 @@ impl App {
                 .block(Block::new()
                         .title("RAM")
                         .title_alignment(Alignment::Center)
-                        .fg(Color::LightYellow)
+                        .fg(self.style.ram_frame_fg)
                         .borders(Borders::all())), 
             ram_area
         );
