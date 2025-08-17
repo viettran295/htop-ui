@@ -1,5 +1,3 @@
-use std::{thread, time::{Duration, Instant}};
-
 mod app;
 mod cmd;
 

@@ -1,3 +1,5 @@
+mod config;
+
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal};
 use indexmap::IndexMap;
@@ -7,7 +9,7 @@ use std::{
     time::{Duration, Instant}
 };
 
-use crate::cmd::{list_all_processes, process};
+use crate::{app::config::AppConfig, cmd::{list_all_processes, process}};
 
 struct AppStyle {
     table_fg: Color,
@@ -23,17 +25,14 @@ pub struct App {
     state: TableState,
     style: AppStyle,
     blink_threshold: bool,
+    config: AppConfig,
     last_tick: Instant,
     tx: Sender<Vec<process::Process>>,
     rx: Receiver<Vec<process::Process>>
 }
 
 impl App {
-    const TICK_RATE: Duration = Duration::from_millis(100);
-    const BLINK_THRESHOLD_RATE: Duration = Duration::from_secs(1);
-    const CPU_THRESHOLD: f32 = 20.0;
-    const MEM_THRESHOLD: f32 = 20.0;
-    
+    const CONFIG_PATH: &str = "./config_example.yaml";
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         let app_style = AppStyle {
@@ -43,6 +42,7 @@ impl App {
             selected_row: tailwind::ZINC.c100,
             exceed_threshold_cell: tailwind::PINK.c400
         };
+        let config = AppConfig::new(Self::CONFIG_PATH);
         Self { 
             exit: false,
             items: IndexMap::new(),
@@ -50,6 +50,7 @@ impl App {
             style: app_style,
             last_tick: Instant::now(),
             blink_threshold: false,
+            config: config,
             tx: tx,
             rx: rx
         }
@@ -74,14 +75,15 @@ impl App {
     }
     
     fn handle_tick_threshold(&mut self) {
-        if self.last_tick.elapsed() >= Self::BLINK_THRESHOLD_RATE {
+        if self.last_tick.elapsed() >= self.config.blink_threshold_rate.unwrap()  {
             self.blink_threshold = ! self.blink_threshold;
             self.last_tick = Instant::now();
         }
     }
     
     fn handle_keyboard_events(&mut self) -> Result<(), std::io::Error> {
-        let timeout = Self::TICK_RATE.saturating_sub(self.last_tick.elapsed());
+        let timeout = self.config.tick_rate.unwrap()
+                                            .saturating_sub(self.last_tick.elapsed());
         while event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
@@ -137,13 +139,13 @@ impl App {
                 Cell::from(process.user.to_string()),
                 Self::blink_cell(
                     process.cpu_usage, 
-                    Self::CPU_THRESHOLD, 
+                    self.config.cpu_threshold.unwrap(), 
                     self.blink_threshold, 
                     self.style.exceed_threshold_cell
                 ),
                 Self::blink_cell(
                     process.mem_usage, 
-                    Self::MEM_THRESHOLD,
+                    self.config.mem_threshold.unwrap(),
                     self.blink_threshold, 
                     self.style.exceed_threshold_cell
                 )
