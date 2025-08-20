@@ -5,7 +5,6 @@ use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal}
 use indexmap::IndexMap;
 use std::{
     sync::{mpsc::{self, Receiver, Sender}}, 
-    thread, 
     time::{Duration, Instant}
 };
 
@@ -56,7 +55,7 @@ impl App {
         }
     }
 
-    pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
+    pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
         let mut processes = Vec::new();
         list_all_processes(self.tx.clone());
         
@@ -69,7 +68,7 @@ impl App {
             terminal.draw(|frame| self.ui(frame))?;
             self.handle_tick_threshold();
             self.handle_keyboard_events()?;
-            thread::sleep(Duration::from_millis(100));
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
         Ok(())
     }

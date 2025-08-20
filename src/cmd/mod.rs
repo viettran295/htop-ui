@@ -1,7 +1,7 @@
 pub mod process;
 
+use tokio;
 use std::{
-    thread, 
     sync::mpsc::Sender,
     time::Duration
 };
@@ -14,9 +14,9 @@ pub fn list_all_processes(tx: Sender<Vec<process::Process>>){
     let mut mem_usage = 0.0;
     let mut cpu_usage = 0.0;
 
-    thread::spawn(move || {
+    tokio::spawn(async move {
         sys.refresh_all();
-        thread::sleep(MINIMUM_CPU_UPDATE_INTERVAL);
+        tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
         loop {
             sys.refresh_all();
             let mut vec_proc: Vec<process::Process> = Vec::new();               
@@ -39,7 +39,7 @@ pub fn list_all_processes(tx: Sender<Vec<process::Process>>){
             }
             tx.send(vec_proc).unwrap();
             
-            thread::sleep(Duration::from_secs(1));
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 }
