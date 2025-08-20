@@ -7,7 +7,11 @@ use std::{
 };
 use sysinfo::{System, Users, MINIMUM_CPU_UPDATE_INTERVAL};
 
-pub fn list_all_processes(tx: Sender<Vec<process::Process>>){
+pub enum Message {
+    Processes(Vec<process::Process>),
+}
+
+pub fn list_all_processes(tx: Sender<Message>){
     let mut sys = System::new_all();
     let users = Users::new_with_refreshed_list();
     let total_mem = sys.total_memory();
@@ -37,7 +41,7 @@ pub fn list_all_processes(tx: Sender<Vec<process::Process>>){
                     .build().unwrap();
                 vec_proc.push(proc);
             }
-            tx.send(vec_proc).unwrap();
+            tx.send(Message::Processes(vec_proc)).unwrap();
             
             tokio::time::sleep(Duration::from_secs(1)).await;
         }

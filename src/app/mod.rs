@@ -8,7 +8,10 @@ use std::{
     time::{Duration, Instant}
 };
 
-use crate::{app::config::AppConfig, cmd::{list_all_processes, process}};
+use crate::{
+    app::config::AppConfig,
+   cmd::{list_all_processes, process, Message}
+};
 
 struct AppStyle {
     table_fg: Color,
@@ -26,8 +29,8 @@ pub struct App {
     blink_threshold: bool,
     config: AppConfig,
     last_tick: Instant,
-    tx: Sender<Vec<process::Process>>,
-    rx: Receiver<Vec<process::Process>>
+    tx: Sender<Message>,
+    rx: Receiver<Message>
 }
 
 impl App {
@@ -61,9 +64,11 @@ impl App {
         
         while ! self.exit {
             if let Ok(proc) = self.rx.try_recv(){
-                processes = proc;
-                process::Process::sort_most_consume_cpu(&mut processes);
-                self.update_processes(processes);
+                if let Message::Processes(proc) = proc {
+                    processes = proc;
+                    process::Process::sort_most_consume_cpu(&mut processes);
+                    self.update_processes(processes);
+                }
             }
             terminal.draw(|frame| self.ui(frame))?;
             self.handle_tick_threshold();
