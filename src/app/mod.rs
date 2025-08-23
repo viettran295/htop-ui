@@ -2,9 +2,8 @@ mod config;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::{self, *}, DefaultTerminal};
-use indexmap::IndexMap;
 use std::{
-    sync::{mpsc::{self, Receiver, Sender}}, 
+    sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant}
 };
 
@@ -23,7 +22,7 @@ struct AppStyle {
 
 pub struct App {
     exit: bool,
-    items: IndexMap<u32, process::Process>,
+    items: Vec<process::Process>,
     cores_usage: Vec<f32>,
     state: TableState,
     style: AppStyle,
@@ -48,7 +47,7 @@ impl App {
         let config = AppConfig::new(Self::CONFIG_PATH);
         Self { 
             exit: false,
-            items: IndexMap::new(),
+            items: Vec::new(),
             cores_usage: Vec::new(),
             state: TableState::default().with_selected(0),
             style: app_style,
@@ -118,9 +117,14 @@ impl App {
     }
     
     fn update_processes(&mut self, processes: Vec<process::Process>) {
-        for proc in processes {
-            self.items.insert(proc.pid, proc);
+        self.items.clear();
+        for process in processes {
+            if process.cpu_usage < 0.2 {
+                continue;
+            }
+            self.items.push(process);
         }
+        self.items.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap());
     }
     
     fn blink_cell(value: f32, threshold: f32, blink: bool, style: Color) -> Cell<'static> {
@@ -174,7 +178,7 @@ impl App {
             .collect::<Row>()
             .height(1);
         
-        let rows = self.items.iter().map(|(_pid, process)| {
+        let rows = self.items.iter().map(|process| {
             Row::new(vec![
                 Cell::from(process.pid.to_string()),
                 Cell::from(process.process_name.to_string()),
