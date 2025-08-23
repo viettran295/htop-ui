@@ -136,21 +136,21 @@ impl App {
     
     fn render_cpu_usage(&mut self, frame: &mut Frame, area: Rect) {
         let mut bars = Vec::new();
-        let cpu_threshold = 50.0;
         let mut bar_color = self.style.cpu_frame_fg;
         let title = Line::from("CPU usage").centered();
         let block = Block::new()
             .borders(Borders::ALL)
-            .padding(Padding::horizontal(1))
+            .padding(Padding::horizontal(3))
             .title(title);
-        for (idx, cores_usage) in self.cores_usage.clone().iter().enumerate() {
-            if *cores_usage > cpu_threshold {
+        for (idx, cores_usage) in self.cores_usage.iter().enumerate() {
+            if *cores_usage > self.config.single_cpu_threshold.unwrap() {
                 bar_color = self.style.exceed_threshold_cell;
             } 
             bars.push(
                 Bar::default()
                     .value(*cores_usage as u64)
-                    .label(Line::from(format!("#{}", idx)))
+                    .label(Line::from(format!("#{idx}")))
+                    .text_value(format!("{}%", *cores_usage as u64))
                     .style(bar_color)
             );
         }
@@ -158,8 +158,8 @@ impl App {
             .block(block)
             .data(BarGroup::default().bars(&bars))
             .direction(Direction::Vertical)
-            .bar_width(4)
-            .bar_gap(3)
+            .bar_width(5)
+            .bar_gap(4)
             .max(100);
         frame.render_widget(bar_chart, area);
     }
@@ -243,8 +243,8 @@ impl App {
         let main_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
-                Constraint::Percentage(70),
-                Constraint::Percentage(30),
+                Constraint::Percentage(60),
+                Constraint::Percentage(40),
             ])
             .split(frame.area());
         let right_side = Layout::default()
