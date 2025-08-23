@@ -1,7 +1,7 @@
 mod config;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal};
+use ratatui::{prelude::*, style::palette::tailwind, widgets::{self, *}, DefaultTerminal};
 use indexmap::IndexMap;
 use std::{
     sync::{mpsc::{self, Receiver, Sender}}, 
@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     app::config::AppConfig,
-   cmd::{list_all_processes, process, Message}
+    cmd::{list_all_processes, process, Message}
 };
 
 struct AppStyle {
@@ -24,13 +24,14 @@ struct AppStyle {
 pub struct App {
     exit: bool,
     items: IndexMap<u32, process::Process>,
+    cores_usage: Vec<f32>,
     state: TableState,
     style: AppStyle,
     blink_threshold: bool,
     config: AppConfig,
     last_tick: Instant,
     tx: Sender<Message>,
-    rx: Receiver<Message>
+    rx: Receiver<Message>,
 }
 
 impl App {
@@ -42,32 +43,38 @@ impl App {
             cpu_frame_fg: tailwind::YELLOW.c300,
             ram_frame_fg: tailwind::PURPLE.c300,
             selected_row: tailwind::ZINC.c100,
-            exceed_threshold_cell: tailwind::PINK.c400
+            exceed_threshold_cell: tailwind::PINK.c400,
         };
         let config = AppConfig::new(Self::CONFIG_PATH);
         Self { 
             exit: false,
             items: IndexMap::new(),
+            cores_usage: Vec::new(),
             state: TableState::default().with_selected(0),
             style: app_style,
             last_tick: Instant::now(),
             blink_threshold: false,
             config: config,
             tx: tx,
-            rx: rx
+            rx: rx,
         }
     }
 
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
         let mut processes = Vec::new();
         list_all_processes(self.tx.clone());
-        
         while ! self.exit {
-            if let Ok(proc) = self.rx.try_recv(){
-                if let Message::Processes(proc) = proc {
-                    processes = proc;
-                    process::Process::sort_most_consume_cpu(&mut processes);
-                    self.update_processes(processes);
+            if let Ok(msg) = self.rx.try_recv(){
+                match msg {
+                    Message::Processes(proc) => {
+                        processes = proc;
+                        process::Process::sort_most_consume_cpu(&mut processes);
+                        self.update_processes(processes);
+                    }
+                    Message::CPUUsage(cpu_usage) => {
+                        self.cores_usage = cpu_usage;
+                    }
+                    _ => {}
                 }
             }
             terminal.draw(|frame| self.ui(frame))?;
@@ -107,6 +114,7 @@ impl App {
         let (process_area, cpu_area, ram_area) = Self::create_layout(frame);
         self.render_widgets(frame, cpu_area, ram_area);
         self.render_table(frame, process_area);
+        self.render_cpu_usage(frame, cpu_area);
     }
     
     fn update_processes(&mut self, processes: Vec<process::Process>) {
@@ -124,6 +132,36 @@ impl App {
         } else {
             return Cell::from(format!("{:.1}%", value))
         }
+    }
+    
+    fn render_cpu_usage(&mut self, frame: &mut Frame, area: Rect) {
+        let mut bars = Vec::new();
+        let cpu_threshold = 50.0;
+        let mut bar_color = self.style.cpu_frame_fg;
+        let title = Line::from("CPU usage").centered();
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(1))
+            .title(title);
+        for (idx, cores_usage) in self.cores_usage.clone().iter().enumerate() {
+            if *cores_usage > cpu_threshold {
+                bar_color = self.style.exceed_threshold_cell;
+            } 
+            bars.push(
+                Bar::default()
+                    .value(*cores_usage as u64)
+                    .label(Line::from(format!("#{}", idx)))
+                    .style(bar_color)
+            );
+        }
+        let bar_chart = BarChart::default()
+            .block(block)
+            .data(BarGroup::default().bars(&bars))
+            .direction(Direction::Vertical)
+            .bar_width(4)
+            .bar_gap(3)
+            .max(100);
+        frame.render_widget(bar_chart, area);
     }
     
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -212,8 +250,8 @@ impl App {
         let right_side = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
+                Constraint::Percentage(20),
+                Constraint::Percentage(80),
             ])
             .split(main_layout[1]);
         return (main_layout[0], right_side[0], right_side[1]);
