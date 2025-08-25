@@ -11,7 +11,7 @@ use sysinfo::{System, Users, MINIMUM_CPU_UPDATE_INTERVAL};
 pub enum Message {
     Processes(Vec<process::Process>),
     CPUUsage(Vec<f32>),
-    RAMUsage(f32)
+    MEMUsage(f32)
 }
 
 pub fn list_all_processes(tx: Sender<Message>){
@@ -19,6 +19,7 @@ pub fn list_all_processes(tx: Sender<Message>){
     let users = Users::new_with_refreshed_list();
     let total_mem = sys.total_memory();
     let mut mem_usage = 0.0;
+    let mut total_mem_usage = 0.0;
     let mut cpu_usage = 0.0;
 
     tokio::spawn(async move {
@@ -27,6 +28,7 @@ pub fn list_all_processes(tx: Sender<Message>){
         loop {
             sys.refresh_all();
             let mut vec_proc: Vec<process::Process> = Vec::new();
+            total_mem_usage = (sys.used_memory() as f32 / total_mem as f32) * 100.0;
             for (pid, process) in sys.processes() {
                 let user_id = process.user_id().unwrap();
                 let user = users.get_user_by_id(user_id).unwrap().name();
@@ -45,6 +47,7 @@ pub fn list_all_processes(tx: Sender<Message>){
                 vec_proc.push(proc);
             }
             tx.send(Message::Processes(vec_proc)).unwrap();
+            tx.send(Message::MEMUsage(total_mem_usage)).unwrap();
             utils::send_cores_usage(&tx, &sys);
             
             tokio::time::sleep(Duration::from_secs(1)).await;

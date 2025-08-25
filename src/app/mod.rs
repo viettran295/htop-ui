@@ -3,8 +3,7 @@ mod config;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::{self, *}, DefaultTerminal};
 use std::{
-    sync::mpsc::{self, Receiver, Sender},
-    time::{Duration, Instant}
+    mem, sync::mpsc::{self, Receiver, Sender}, time::{Duration, Instant}
 };
 
 use crate::{
@@ -15,7 +14,7 @@ use crate::{
 struct AppStyle {
     table_fg: Color,
     cpu_frame_fg: Color,
-    ram_frame_fg: Color,
+    mem_frame_fg: Color,
     selected_row: Color,
     exceed_threshold_cell: Color,
 }
@@ -24,6 +23,7 @@ pub struct App {
     exit: bool,
     items: Vec<process::Process>,
     cores_usage: Vec<f32>,
+    mem_usage: f32,
     state: TableState,
     style: AppStyle,
     blink_threshold: bool,
@@ -40,7 +40,7 @@ impl App {
         let app_style = AppStyle {
             table_fg: tailwind::LIME.c200,
             cpu_frame_fg: tailwind::YELLOW.c300,
-            ram_frame_fg: tailwind::PURPLE.c300,
+            mem_frame_fg: tailwind::PURPLE.c300,
             selected_row: tailwind::ZINC.c100,
             exceed_threshold_cell: tailwind::PINK.c400,
         };
@@ -49,6 +49,7 @@ impl App {
             exit: false,
             items: Vec::new(),
             cores_usage: Vec::new(),
+            mem_usage: 0.0,
             state: TableState::default().with_selected(0),
             style: app_style,
             last_tick: Instant::now(),
@@ -73,7 +74,9 @@ impl App {
                     Message::CPUUsage(cpu_usage) => {
                         self.cores_usage = cpu_usage;
                     }
-                    _ => {}
+                    Message::MEMUsage(mem_usage) => {
+                        self.mem_usage = mem_usage;
+                    }
                 }
             }
             terminal.draw(|frame| self.ui(frame))?;
@@ -110,10 +113,11 @@ impl App {
     }
     
     fn ui(&mut self, frame: &mut Frame) {
-        let (process_area, cpu_area, ram_area) = Self::create_layout(frame);
-        self.render_widgets(frame, cpu_area, ram_area);
+        let (process_area, cpu_area, mem_area) = Self::create_layout(frame);
+        self.render_widgets(frame, cpu_area, mem_area);
         self.render_table(frame, process_area);
         self.render_cpu_usage(frame, cpu_area);
+        self.render_mem_usage(frame, mem_area);
     }
     
     fn update_processes(&mut self, processes: Vec<process::Process>) {
@@ -168,6 +172,31 @@ impl App {
         frame.render_widget(bar_chart, area);
     }
     
+    fn render_mem_usage(&self, frame: &mut Frame, area: Rect) {
+        let title = Line::from("Memory usage").centered();
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(3))
+            .title(title);
+        let bar_style = Style::default()
+            .fg(self.style.mem_frame_fg)
+            .bg(Color::DarkGray);   
+        let bar = vec![
+            Bar::default()
+                .value(self.mem_usage as u64)
+                .value_style(Style::default().bg(self.style.mem_frame_fg))
+                .label(Line::from(format!("{:.1}%", self.mem_usage)))
+                .style(bar_style)
+        ];
+        let bar_chart = BarChart::default()
+            .block(block)
+            .data(BarGroup::default().bars(&bar))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .max(100);
+        frame.render_widget(bar_chart, area);
+    }
+    
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
@@ -216,7 +245,7 @@ impl App {
 
         frame.render_stateful_widget(t, area, &mut self.state);
     }
-    
+        
     fn render_widgets(
         &mut self,
         frame: &mut Frame, 
@@ -237,7 +266,7 @@ impl App {
                 .block(Block::new()
                         .title("RAM")
                         .title_alignment(Alignment::Center)
-                        .fg(self.style.ram_frame_fg)
+                        .fg(self.style.mem_frame_fg)
                         .borders(Borders::all())), 
             ram_area
         );
@@ -255,7 +284,8 @@ impl App {
             .direction(Direction::Vertical)
             .constraints(vec![
                 Constraint::Percentage(20),
-                Constraint::Percentage(80),
+                Constraint::Percentage(10),
+                Constraint::Percentage(60),
             ])
             .split(main_layout[1]);
         return (main_layout[0], right_side[0], right_side[1]);
