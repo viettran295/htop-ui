@@ -1,27 +1,29 @@
 mod config;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::{prelude::*, style::palette::tailwind, widgets::{self, *}, DefaultTerminal};
+use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal};
 use std::{
-    mem, sync::mpsc::{self, Receiver, Sender}, time::{Duration, Instant}
+    sync::mpsc::{self, Receiver, Sender}, time::{Duration, Instant}
 };
 
 use crate::{
     app::config::AppConfig,
-    cmd::{list_all_processes, process, Message}
+    cmd::{get_network_info, list_all_processes, network::Network, process, Message}
 };
 
 struct AppStyle {
     table_fg: Color,
     cpu_frame_fg: Color,
     mem_frame_fg: Color,
+    net_frame_fg: Color,
     selected_row: Color,
     exceed_threshold_cell: Color,
 }
 
 pub struct App {
     exit: bool,
-    items: Vec<process::Process>,
+    processes: Vec<process::Process>,
+    network: Network,
     cores_usage: Vec<f32>,
     mem_usage: f32,
     state: TableState,
@@ -41,13 +43,15 @@ impl App {
             table_fg: tailwind::LIME.c200,
             cpu_frame_fg: tailwind::YELLOW.c300,
             mem_frame_fg: tailwind::PURPLE.c300,
+            net_frame_fg: tailwind::GREEN.c300,
             selected_row: tailwind::ZINC.c100,
             exceed_threshold_cell: tailwind::PINK.c400,
         };
         let config = AppConfig::new(Self::CONFIG_PATH);
         Self { 
             exit: false,
-            items: Vec::new(),
+            processes: Vec::new(),
+            network: Network::new(),
             cores_usage: Vec::new(),
             mem_usage: 0.0,
             state: TableState::default().with_selected(0),
@@ -61,13 +65,13 @@ impl App {
     }
 
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
-        let mut processes = Vec::new();
         list_all_processes(self.tx.clone());
+        get_network_info(self.tx.clone());
         while ! self.exit {
             if let Ok(msg) = self.rx.try_recv(){
                 match msg {
                     Message::Processes(proc) => {
-                        processes = proc;
+                        let mut processes = proc;
                         process::Process::sort_most_consume_cpu(&mut processes);
                         self.update_processes(processes);
                     }
@@ -76,6 +80,9 @@ impl App {
                     }
                     Message::MEMUsage(mem_usage) => {
                         self.mem_usage = mem_usage;
+                    }
+                    Message::Network(net_data) => {
+                        self.network.update(net_data.upload, net_data.download);
                     }
                 }
             }
@@ -113,22 +120,23 @@ impl App {
     }
     
     fn ui(&mut self, frame: &mut Frame) {
-        let (process_area, cpu_area, mem_area) = Self::create_layout(frame);
-        self.render_widgets(frame, cpu_area, mem_area);
+        let (process_area, cpu_area, network_area, mem_area) = Self::create_layout(frame);
+        self.render_widgets(frame, cpu_area, mem_area, network_area);
         self.render_table(frame, process_area);
         self.render_cpu_usage(frame, cpu_area);
         self.render_mem_usage(frame, mem_area);
+        self.render_network(frame, network_area);
     }
     
     fn update_processes(&mut self, processes: Vec<process::Process>) {
-        self.items.clear();
+        self.processes.clear();
         for process in processes {
             if process.cpu_usage < 0.2 {
                 continue;
             }
-            self.items.push(process);
+            self.processes.push(process);
         }
-        self.items.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap());
+        self.processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap());
     }
     
     fn blink_cell(value: f32, threshold: f32, blink: bool, style: Color) -> Cell<'static> {
@@ -197,6 +205,36 @@ impl App {
         frame.render_widget(bar_chart, area);
     }
     
+    fn render_network(&mut self, frame: &mut Frame, area: Rect) {
+        let title = Line::from("Network").centered();
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(3))
+            .title(title);
+        let bar_style = Style::default()
+            .fg(self.style.net_frame_fg)
+            .bg(Color::DarkGray);   
+        let bar = vec![
+            Bar::default()
+                .value(self.network.upload as u64)
+                .value_style(Style::default().bg(self.style.net_frame_fg))
+                .label(Line::from(format!("Upload {:.1} Kbps", self.network.upload)))
+                .style(bar_style),
+            Bar::default()
+                .value(self.network.download as u64)
+                .value_style(Style::default().bg(self.style.net_frame_fg))
+                .label(Line::from(format!("Download {:.1} Kbps", self.network.download)))
+                .style(bar_style)
+        ];
+        let bar_chart = BarChart::default()
+            .block(block)
+            .data(BarGroup::default().bars(&bar))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .max(200);
+        frame.render_widget(bar_chart, area);
+    }
+    
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
@@ -207,7 +245,7 @@ impl App {
             .collect::<Row>()
             .height(1);
         
-        let rows = self.items.iter().map(|process| {
+        let rows = self.processes.iter().map(|process| {
             Row::new(vec![
                 Cell::from(process.pid.to_string()),
                 Cell::from(process.process_name.to_string()),
@@ -250,12 +288,12 @@ impl App {
         &mut self,
         frame: &mut Frame, 
         cpu_area: Rect,
-        ram_area: Rect
+        ram_area: Rect,
+        net_area: Rect,
     ) {
         frame.render_widget(
             Paragraph::new("")
                 .block(Block::new()
-                        .title("CPU")
                         .title_alignment(Alignment::Center)
                         .fg(self.style.cpu_frame_fg)
                         .borders(Borders::all())), 
@@ -264,7 +302,14 @@ impl App {
         frame.render_widget(
             Paragraph::new("")
                 .block(Block::new()
-                        .title("RAM")
+                        .title_alignment(Alignment::Center)
+                        .fg(self.style.net_frame_fg)
+                        .borders(Borders::all())), 
+            net_area
+        );
+        frame.render_widget(
+            Paragraph::new("")
+                .block(Block::new()
                         .title_alignment(Alignment::Center)
                         .fg(self.style.mem_frame_fg)
                         .borders(Borders::all())), 
@@ -272,7 +317,7 @@ impl App {
         );
     }
     
-    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect) {
+    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect) {
         let main_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
@@ -284,18 +329,18 @@ impl App {
             .direction(Direction::Vertical)
             .constraints(vec![
                 Constraint::Percentage(20),
+                Constraint::Percentage(15),
                 Constraint::Percentage(10),
-                Constraint::Percentage(60),
             ])
             .split(main_layout[1]);
-        return (main_layout[0], right_side[0], right_side[1]);
+        return (main_layout[0], right_side[0], right_side[1], right_side[2]);
     }
     
     fn next_row(&mut self) {
         let row = match self.state.selected() {
             Some(row) => {
-                if row >= self.items.len() - 1 {
-                    self.items.len() - 1
+                if row >= self.processes.len() - 1 {
+                    self.processes.len() - 1
                 } else {
                     row + 1
                 }
