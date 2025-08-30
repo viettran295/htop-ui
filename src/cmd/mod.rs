@@ -1,5 +1,6 @@
 pub mod process;
 pub mod network;
+pub mod disk;
 mod utils;
 
 use tokio;
@@ -7,15 +8,16 @@ use std::{
     sync::mpsc::Sender,
     time::Duration
 };
-use sysinfo::{System, Users, MINIMUM_CPU_UPDATE_INTERVAL};
+use sysinfo::{System, Users, Disks, MINIMUM_CPU_UPDATE_INTERVAL};
 
-use crate::cmd::network::Network;
+use crate::cmd::{disk::Disk, network::Network};
 
 pub enum Message {
     Processes(Vec<process::Process>),
     Network(network::Network),
     CPUUsage(Vec<f32>),
-    MEMUsage(f32)
+    MEMUsage(f32),
+    DiskUsage(Vec<Disk>),
 }
 
 pub fn list_all_processes(tx: Sender<Message>){
@@ -78,4 +80,20 @@ pub fn get_network_info(tx: Sender<Message>) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
+}
+
+pub fn get_disk_usage(tx: Sender<Message>) {
+    let sys_disks = Disks::new_with_refreshed_list();
+    let mut disks: Vec<Disk> = Vec::new(); 
+ 
+     for disk in sys_disks.list() {
+         let disk = Disk::new(
+             disk.name().to_string_lossy().into_owned(), 
+             disk.file_system().to_string_lossy().into_owned(), 
+             disk.total_space(), 
+             disk.available_space()
+         );
+         disks.push(disk);
+     }
+     tx.send(Message::DiskUsage(disks)).unwrap();
 }

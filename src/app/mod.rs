@@ -8,13 +8,14 @@ use std::{
 
 use crate::{
     app::config::AppConfig,
-    cmd::{get_network_info, list_all_processes, network::Network, process, Message}
+    cmd::{disk::Disk, get_disk_usage, get_network_info, list_all_processes, network::Network, process, Message}
 };
 
 struct AppStyle {
     table_fg: Color,
     cpu_frame_fg: Color,
     mem_frame_fg: Color,
+    disk_frame_fg: Color,
     net_frame_fg: Color,
     selected_row: Color,
     exceed_threshold_cell: Color,
@@ -26,6 +27,7 @@ pub struct App {
     network: Network,
     cores_usage: Vec<f32>,
     mem_usage: f32,
+    disks_usage: Vec<Disk>,
     state: TableState,
     style: AppStyle,
     blink_threshold: bool,
@@ -43,6 +45,7 @@ impl App {
             table_fg: tailwind::LIME.c200,
             cpu_frame_fg: tailwind::YELLOW.c300,
             mem_frame_fg: tailwind::PURPLE.c300,
+            disk_frame_fg: tailwind::INDIGO.c300,
             net_frame_fg: tailwind::GREEN.c300,
             selected_row: tailwind::ZINC.c100,
             exceed_threshold_cell: tailwind::PINK.c400,
@@ -54,6 +57,7 @@ impl App {
             network: Network::new(),
             cores_usage: Vec::new(),
             mem_usage: 0.0,
+            disks_usage: Vec::new(),
             state: TableState::default().with_selected(0),
             style: app_style,
             last_tick: Instant::now(),
@@ -67,6 +71,7 @@ impl App {
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
         list_all_processes(self.tx.clone());
         get_network_info(self.tx.clone());
+        get_disk_usage(self.tx.clone());
         while ! self.exit {
             if let Ok(msg) = self.rx.try_recv(){
                 match msg {
@@ -83,6 +88,9 @@ impl App {
                     }
                     Message::Network(net_data) => {
                         self.network.update(net_data.upload, net_data.download);
+                    }
+                    Message::DiskUsage(disk_data) => {
+                        self.disks_usage = disk_data;
                     }
                 }
             }
@@ -120,12 +128,13 @@ impl App {
     }
     
     fn ui(&mut self, frame: &mut Frame) {
-        let (process_area, cpu_area, network_area, mem_area) = Self::create_layout(frame);
-        self.render_widgets(frame, cpu_area, mem_area, network_area);
+        let (process_area, cpu_area, network_area, mem_area, disk_area) = Self::create_layout(frame);
+        self.render_widgets(frame, cpu_area, mem_area, network_area, disk_area);
         self.render_table(frame, process_area);
         self.render_cpu_usage(frame, cpu_area);
         self.render_mem_usage(frame, mem_area);
         self.render_network(frame, network_area);
+        self.render_disks_usage(frame, disk_area);
     }
     
     fn update_processes(&mut self, processes: Vec<process::Process>) {
@@ -199,6 +208,40 @@ impl App {
         let bar_chart = BarChart::default()
             .block(block)
             .data(BarGroup::default().bars(&bar))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .max(100);
+        frame.render_widget(bar_chart, area);
+    }
+    
+    fn render_disks_usage(&self, frame: &mut Frame, area: Rect) {
+        let title = Line::from("Disk usage").centered();
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(3))
+            .title(title);
+        let bar_style = Style::default()
+            .fg(self.style.disk_frame_fg)
+            .bg(Color::DarkGray);
+        let text_style = Style::default()
+            .fg(tailwind::BLACK)
+            .bg(self.style.disk_frame_fg);
+        let mut bars: Vec<Bar> = Vec::new();
+        for disk in self.disks_usage.iter() {
+            let total_space_gb = disk.total_space / 1_000_000_000;
+            bars.push(
+                Bar::default()
+                    .value(disk.percent_used_space()as u64)
+                    .value_style(Style::default().bg(self.style.mem_frame_fg))
+                    .text_value(format!("{}% of {}GB", disk.percent_used_space(), total_space_gb))
+                    .value_style(text_style)
+                    .label(Line::from(format!("{:?}", disk.name)))
+                    .style(bar_style)
+            );
+        }
+        let bar_chart = BarChart::default()
+            .block(block)
+            .data(BarGroup::default().bars(&bars))
             .direction(Direction::Horizontal)
             .bar_width(1)
             .max(100);
@@ -290,6 +333,7 @@ impl App {
         cpu_area: Rect,
         ram_area: Rect,
         net_area: Rect,
+        disk_area: Rect
     ) {
         frame.render_widget(
             Paragraph::new("")
@@ -315,9 +359,17 @@ impl App {
                         .borders(Borders::all())), 
             ram_area
         );
+        frame.render_widget(
+            Paragraph::new("")
+                .block(Block::new()
+                        .title_alignment(Alignment::Center)
+                        .fg(self.style.disk_frame_fg)
+                        .borders(Borders::all())), 
+            disk_area
+        );
     }
     
-    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect) {
+    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect) {
         let main_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
@@ -331,9 +383,10 @@ impl App {
                 Constraint::Percentage(20),
                 Constraint::Percentage(15),
                 Constraint::Percentage(10),
+                Constraint::Percentage(15),
             ])
             .split(main_layout[1]);
-        return (main_layout[0], right_side[0], right_side[1], right_side[2]);
+        return (main_layout[0], right_side[0], right_side[1], right_side[2], right_side[3]);
     }
     
     fn next_row(&mut self) {
