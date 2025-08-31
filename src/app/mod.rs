@@ -192,6 +192,7 @@ impl App {
             .direction(Direction::Vertical)
             .bar_width(5)
             .bar_gap(4)
+            .bar_style(Style::default().bg(Color::DarkGray))
             .max(100);
         frame.render_widget(bar_chart, area);
     }
