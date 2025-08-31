@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     app::config::AppConfig,
-    cmd::{disk::Disk, get_disk_usage, get_network_info, list_all_processes, network::Network, process, Message}
+    cmd::{disk::Disk, get_disk_usage, get_network_info, get_temperature, list_all_processes, network::Network, process, temperature::Temperature, Message}
 };
 
 struct AppStyle {
@@ -28,6 +28,7 @@ pub struct App {
     cores_usage: Vec<f32>,
     mem_usage: f32,
     disks_usage: Vec<Disk>,
+    temperatures: Vec<Temperature>,
     state: TableState,
     style: AppStyle,
     blink_threshold: bool,
@@ -58,6 +59,7 @@ impl App {
             cores_usage: Vec::new(),
             mem_usage: 0.0,
             disks_usage: Vec::new(),
+            temperatures: Vec::new(),
             state: TableState::default().with_selected(0),
             style: app_style,
             last_tick: Instant::now(),
@@ -72,6 +74,7 @@ impl App {
         list_all_processes(self.tx.clone());
         get_network_info(self.tx.clone());
         get_disk_usage(self.tx.clone());
+        get_temperature(self.tx.clone());
         while ! self.exit {
             if let Ok(msg) = self.rx.try_recv(){
                 match msg {
@@ -91,6 +94,9 @@ impl App {
                     }
                     Message::DiskUsage(disk_data) => {
                         self.disks_usage = disk_data;
+                    }
+                    Message::Temperature(temp) => {
+                        self.temperatures = temp;
                     }
                 }
             }
@@ -128,13 +134,14 @@ impl App {
     }
     
     fn ui(&mut self, frame: &mut Frame) {
-        let (process_area, cpu_area, network_area, mem_area, disk_area) = Self::create_layout(frame);
+        let (process_area, cpu_area, network_area, mem_area, disk_area, temperature_area) = Self::create_layout(frame);
         self.render_widgets(frame, cpu_area, mem_area, network_area, disk_area);
         self.render_table(frame, process_area);
         self.render_cpu_usage(frame, cpu_area);
         self.render_mem_usage(frame, mem_area);
         self.render_network(frame, network_area);
         self.render_disks_usage(frame, disk_area);
+        self.render_temperature(frame, temperature_area);
     }
     
     fn update_processes(&mut self, processes: Vec<process::Process>) {
@@ -278,6 +285,36 @@ impl App {
         frame.render_widget(bar_chart, area);
     }
     
+    fn render_temperature(&mut self, frame: &mut Frame, area: Rect) {
+        let header = ["Name", "°C", "Max value", "Critical"]
+            .into_iter()
+            .map(Cell::from)
+            .collect::<Row>()
+            .height(1);
+        let rows = self.temperatures.iter().map(|temperature| {
+            Row::new(vec![
+                Cell::from(temperature.label.clone()),
+                Cell::from(temperature.value.to_string()),
+                Cell::from(temperature.max.to_string()),
+                Cell::from(temperature.critical.to_string()),
+            ])
+        });
+        let t = Table::new(
+            rows,
+            [
+                Constraint::Min(30),
+                Constraint::Length(15),
+                Constraint::Length(15),
+                Constraint::Length(15),
+            ],
+        )
+        .header(header)
+        .fg(self.style.table_fg)
+        .block(Block::default().borders(Borders::ALL).title("Temperature"));
+
+        frame.render_stateful_widget(t, area, &mut self.state);
+    }
+    
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
@@ -369,7 +406,7 @@ impl App {
         );
     }
     
-    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect) {
+    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect, Rect) {
         let main_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
@@ -384,9 +421,10 @@ impl App {
                 Constraint::Percentage(15),
                 Constraint::Percentage(10),
                 Constraint::Percentage(15),
+                Constraint::Percentage(40),
             ])
             .split(main_layout[1]);
-        return (main_layout[0], right_side[0], right_side[1], right_side[2], right_side[3]);
+        return (main_layout[0], right_side[0], right_side[1], right_side[2], right_side[3], right_side[4]);
     }
     
     fn next_row(&mut self) {

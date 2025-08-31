@@ -1,16 +1,14 @@
 #[derive (Default)]
 pub struct Disk {
     pub name: String,
-    pub file_system: String,
     pub total_space: u64,
     pub available_space: u64,
 }
 
 impl Disk {
-    pub fn new(name: String, file_system: String, total_space: u64, available_space: u64) -> Self {
+    pub fn new(name: String, total_space: u64, available_space: u64) -> Self {
         Self {
             name,
-            file_system,
             total_space,
             available_space,
         }

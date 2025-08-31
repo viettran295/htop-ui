@@ -1,6 +1,7 @@
 pub mod process;
 pub mod network;
 pub mod disk;
+pub mod temperature;
 mod utils;
 
 use tokio;
@@ -8,9 +9,9 @@ use std::{
     sync::mpsc::Sender,
     time::Duration
 };
-use sysinfo::{System, Users, Disks, MINIMUM_CPU_UPDATE_INTERVAL};
+use sysinfo::{System, Users, Disks, Components, MINIMUM_CPU_UPDATE_INTERVAL};
 
-use crate::cmd::{disk::Disk, network::Network};
+use crate::cmd::{disk::Disk, network::Network, temperature::Temperature};
 
 pub enum Message {
     Processes(Vec<process::Process>),
@@ -18,6 +19,7 @@ pub enum Message {
     CPUUsage(Vec<f32>),
     MEMUsage(f32),
     DiskUsage(Vec<Disk>),
+    Temperature(Vec<Temperature>)
 }
 
 pub fn list_all_processes(tx: Sender<Message>){
@@ -89,11 +91,35 @@ pub fn get_disk_usage(tx: Sender<Message>) {
      for disk in sys_disks.list() {
          let disk = Disk::new(
              disk.name().to_string_lossy().into_owned(), 
-             disk.file_system().to_string_lossy().into_owned(), 
              disk.total_space(), 
              disk.available_space()
          );
          disks.push(disk);
      }
      tx.send(Message::DiskUsage(disks)).unwrap();
+}
+
+pub fn get_temperature(tx: Sender<Message>) {
+    let mut temperatures: Vec<Temperature> = Vec::new();
+    tokio::spawn(async  move {
+        let mut sys_components = Components::new_with_refreshed_list();
+        loop {
+            temperatures.clear();
+            sys_components.refresh(true);
+            for comp in sys_components.iter() {
+                let temp = Temperature::new(
+                    comp.label().to_string(), 
+                    comp.temperature().unwrap_or(0.0), 
+                    comp.max().unwrap_or(0.0),
+                    comp.critical().unwrap_or(0.0),
+                );
+                if temp.value == 0.0 {
+                    continue;
+                }
+                temperatures.push(temp);
+            }
+            tx.send(Message::Temperature(temperatures.clone())).unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
 }
