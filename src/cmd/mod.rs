@@ -6,10 +6,9 @@ mod utils;
 
 use tokio;
 use std::{
-    sync::mpsc::Sender,
-    time::Duration
+    collections::HashMap, sync::mpsc::Sender, time::Duration
 };
-use sysinfo::{System, Users, Disks, Components, MINIMUM_CPU_UPDATE_INTERVAL};
+use sysinfo::{Components, Disks, ProcessStatus, System, Users, MINIMUM_CPU_UPDATE_INTERVAL};
 
 use crate::cmd::{disk::Disk, network::Network, temperature::Temperature};
 
@@ -19,7 +18,8 @@ pub enum Message {
     CPUUsage(Vec<f32>),
     MEMUsage(f32),
     DiskUsage(Vec<Disk>),
-    Temperature(Vec<Temperature>)
+    Temperature(Vec<Temperature>),
+    GeneralInfo(Vec<String>),
 }
 
 pub fn list_all_processes(tx: Sender<Message>){
@@ -120,6 +120,35 @@ pub fn get_temperature(tx: Sender<Message>) {
             }
             tx.send(Message::Temperature(temperatures.clone())).unwrap();
             tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
+}
+
+pub fn get_general_info(tx: Sender<Message>) {
+    let mut sys = System::new_all();
+
+    tokio::spawn(async move {
+        loop {
+            sys.refresh_all();
+            let mut message: Vec<String> = Vec::new();
+            let mut status_counts: HashMap<ProcessStatus, u32> = HashMap::new();
+            for (_, proc) in sys.processes() {
+                *status_counts.entry(proc.status()).or_insert(0) += 1;
+            }
+            message.push(
+                format!("Uptime: {} \n", System::uptime())
+            );
+            message.push(
+                format!("Tasks: {} total, {} running, {} sleep, {} stopped, {} zombie \n",
+                    status_counts.values().sum::<u32>(), 
+                    status_counts.get(&ProcessStatus::Run).unwrap_or(&0),
+                    status_counts.get(&ProcessStatus::Sleep).unwrap_or(&0),
+                    status_counts.get(&ProcessStatus::Stop).unwrap_or(&0),
+                    status_counts.get(&ProcessStatus::Zombie).unwrap_or(&0),
+                )
+            );
+            tx.send(Message::GeneralInfo(message)).unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 }

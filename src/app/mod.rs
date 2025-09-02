@@ -8,14 +8,16 @@ use std::{
 
 use crate::{
     app::config::AppConfig,
-    cmd::{disk::Disk, get_disk_usage, get_network_info, get_temperature, list_all_processes, network::Network, process, temperature::Temperature, Message}
+    cmd::{disk::Disk, get_disk_usage, get_general_info, get_network_info, get_temperature, list_all_processes, network::Network, process, temperature::Temperature, Message}
 };
 
 struct AppStyle {
+    info_fg: Color,
     table_fg: Color,
     cpu_frame_fg: Color,
     mem_frame_fg: Color,
     disk_frame_fg: Color,
+    temperature_fg: Color,
     net_frame_fg: Color,
     selected_row: Color,
     exceed_threshold_cell: Color,
@@ -23,6 +25,7 @@ struct AppStyle {
 
 pub struct App {
     exit: bool,
+    general_infos: Vec<String>,
     processes: Vec<process::Process>,
     network: Network,
     cores_usage: Vec<f32>,
@@ -43,10 +46,12 @@ impl App {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         let app_style = AppStyle {
+            info_fg: tailwind::TEAL.c300,
             table_fg: tailwind::LIME.c200,
             cpu_frame_fg: tailwind::YELLOW.c300,
             mem_frame_fg: tailwind::PURPLE.c300,
             disk_frame_fg: tailwind::INDIGO.c300,
+            temperature_fg: tailwind::ROSE.c300,
             net_frame_fg: tailwind::GREEN.c300,
             selected_row: tailwind::ZINC.c100,
             exceed_threshold_cell: tailwind::PINK.c400,
@@ -54,6 +59,7 @@ impl App {
         let config = AppConfig::new(Self::CONFIG_PATH);
         Self { 
             exit: false,
+            general_infos: Vec::new(),
             processes: Vec::new(),
             network: Network::new(),
             cores_usage: Vec::new(),
@@ -75,6 +81,7 @@ impl App {
         get_network_info(self.tx.clone());
         get_disk_usage(self.tx.clone());
         get_temperature(self.tx.clone());
+        get_general_info(self.tx.clone());
         while ! self.exit {
             if let Ok(msg) = self.rx.try_recv(){
                 match msg {
@@ -97,6 +104,9 @@ impl App {
                     }
                     Message::Temperature(temp) => {
                         self.temperatures = temp;
+                    }
+                    Message::GeneralInfo(info_data) => {
+                        self.general_infos = info_data;
                     }
                 }
             }
@@ -134,9 +144,10 @@ impl App {
     }
     
     fn ui(&mut self, frame: &mut Frame) {
-        let (process_area, cpu_area, network_area, mem_area, disk_area, temperature_area) = Self::create_layout(frame);
+        let (info_area,process_area, cpu_area, network_area, mem_area, disk_area, temperature_area) = Self::create_layout(frame);
         self.render_widgets(frame, cpu_area, mem_area, network_area, disk_area);
-        self.render_table(frame, process_area);
+        self.render_general_info(frame, info_area);
+        self.render_processes_table(frame, process_area);
         self.render_cpu_usage(frame, cpu_area);
         self.render_mem_usage(frame, mem_area);
         self.render_network(frame, network_area);
@@ -310,13 +321,27 @@ impl App {
             ],
         )
         .header(header)
-        .fg(self.style.table_fg)
+        .fg(self.style.temperature_fg)
         .block(Block::default().borders(Borders::ALL).title("Temperature"));
 
         frame.render_stateful_widget(t, area, &mut self.state);
     }
     
-    fn render_table(&mut self, frame: &mut Frame, area: Rect) {
+    fn render_general_info(&mut self, frame: &mut Frame, area: Rect) {
+        let mut text = Vec::new();
+        for info in self.general_infos.clone() {
+            text.push(
+                Line::from(info)
+            );
+        }
+        let paragraph = Paragraph::new(text)
+            .fg(self.style.info_fg)
+            .block(Block::default().borders(Borders::ALL).title("Info"));
+
+        frame.render_widget(paragraph, area);
+    }
+    
+    fn render_processes_table(&mut self, frame: &mut Frame, area: Rect) {
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
             .fg(self.style.selected_row);
@@ -407,7 +432,7 @@ impl App {
         );
     }
     
-    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect, Rect) {
+    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect, Rect, Rect) {
         let main_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
@@ -415,6 +440,13 @@ impl App {
                 Constraint::Percentage(40),
             ])
             .split(frame.area());
+        let left_side = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![
+                Constraint::Percentage(20),
+                Constraint::Percentage(80),
+            ])
+            .split(main_layout[0]);
         let right_side = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
@@ -425,7 +457,7 @@ impl App {
                 Constraint::Percentage(40),
             ])
             .split(main_layout[1]);
-        return (main_layout[0], right_side[0], right_side[1], right_side[2], right_side[3], right_side[4]);
+        return (left_side[0], left_side[1], right_side[0], right_side[1], right_side[2], right_side[3], right_side[4]);
     }
     
     fn next_row(&mut self) {
