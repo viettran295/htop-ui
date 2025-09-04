@@ -132,11 +132,16 @@ pub fn get_general_info(tx: Sender<Message>) {
             sys.refresh_all();
             let mut message: Vec<String> = Vec::new();
             let mut status_counts: HashMap<ProcessStatus, u32> = HashMap::new();
+            let load_avg = System::load_average();
+            
             for (_, proc) in sys.processes() {
                 *status_counts.entry(proc.status()).or_insert(0) += 1;
             }
             message.push(
                 format!("Uptime: {} \n", seconds_to_timestamp(System::uptime()))
+            );
+            message.push(
+                format!("Load averag: 1-minute: {}, 5-minute: {}, 15-minute: {}", load_avg.one, load_avg.five, load_avg.fifteen)
             );
             message.push(
                 format!("Tasks: {} total, {} running, {} sleep, {} stopped, {} zombie \n",
