@@ -10,7 +10,7 @@ use std::{
 };
 use sysinfo::{Components, Disks, ProcessStatus, System, Users, MINIMUM_CPU_UPDATE_INTERVAL};
 
-use crate::cmd::{disk::Disk, network::Network, temperature::Temperature};
+use crate::cmd::{disk::Disk, network::Network, temperature::Temperature, utils::seconds_to_timestamp};
 
 pub enum Message {
     Processes(Vec<process::Process>),
@@ -136,7 +136,7 @@ pub fn get_general_info(tx: Sender<Message>) {
                 *status_counts.entry(proc.status()).or_insert(0) += 1;
             }
             message.push(
-                format!("Uptime: {} \n", System::uptime())
+                format!("Uptime: {} \n", seconds_to_timestamp(System::uptime()))
             );
             message.push(
                 format!("Tasks: {} total, {} running, {} sleep, {} stopped, {} zombie \n",
