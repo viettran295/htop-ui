@@ -27,6 +27,7 @@ pub struct App {
     exit: bool,
     general_infos: Vec<String>,
     processes: Vec<process::Process>,
+    selected_pid: usize, 
     network: Network,
     cores_usage: Vec<f32>,
     mem_usage: f32,
@@ -61,6 +62,7 @@ impl App {
             exit: false,
             general_infos: Vec::new(),
             processes: Vec::new(),
+            selected_pid: 0,
             network: Network::new(),
             cores_usage: Vec::new(),
             mem_usage: 0.0,
@@ -351,7 +353,10 @@ impl App {
             .collect::<Row>()
             .height(1);
         
-        let rows = self.processes.iter().map(|process| {
+        let rows = self.processes.iter().enumerate().map(|(idx, process)| {
+            if process.pid as usize == self.selected_pid {
+                self.state.select(Some(idx));
+            }
             Row::new(vec![
                 Cell::from(process.pid.to_string()),
                 Cell::from(process.process_name.to_string()),
@@ -472,6 +477,7 @@ impl App {
             None => 0,
         };
         self.state.select(Some(row));
+        self.update_seleted_process_id(row);
     }
     
     fn previous_row(&mut self) {
@@ -486,5 +492,11 @@ impl App {
             None => 0,
         };
         self.state.select(Some(row));
+        self.update_seleted_process_id(row);
+    }
+    fn update_seleted_process_id(&mut self, row: usize) {
+        if let Some(process) = self.processes.get(row) {
+            self.selected_pid = process.pid as usize;
+        }
     }
 }
