@@ -149,7 +149,16 @@ impl App {
     }
     
     fn ui(&mut self, frame: &mut Frame) {
-        let (info_area,process_area, cpu_area, network_area, mem_area, disk_area, temperature_area) = Self::create_layout(frame);
+        let (
+            info_area,
+            process_area, 
+            cpu_area, 
+            network_area, 
+            disk_io,
+            mem_area,
+            disk_area, 
+            temperature_area,
+        ) = Self::create_layout(frame);
         self.render_widgets(frame, cpu_area, mem_area, network_area, disk_area);
         self.render_general_info(frame, info_area);
         self.render_processes_table(frame, process_area);
@@ -207,7 +216,7 @@ impl App {
             .data(BarGroup::default().bars(&bars))
             .direction(Direction::Vertical)
             .bar_width(5)
-            .bar_gap(4)
+            .bar_gap(6)
             .bar_style(Style::default().bg(Color::DarkGray))
             .max(100);
         frame.render_widget(bar_chart, area);
@@ -440,32 +449,55 @@ impl App {
         );
     }
     
-    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect, Rect, Rect) {
+    fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect, Rect, Rect, Rect) {
         let main_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
-                Constraint::Percentage(60),
-                Constraint::Percentage(40),
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
             ])
             .split(frame.area());
-        let left_side = Layout::default()
+        let left_side = main_layout[0];
+        let right_side = main_layout[1];
+        
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
                 Constraint::Percentage(20),
-                Constraint::Percentage(80),
+                Constraint::Percentage(60),
+                Constraint::Percentage(20),
             ])
-            .split(main_layout[0]);
-        let right_side = Layout::default()
+            .split(left_side);
+        let info_area = chunks[0];
+        let process_area = chunks[1];
+        let cpu_area = chunks[2];
+        
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
-                Constraint::Percentage(20),
                 Constraint::Percentage(15),
+                Constraint::Percentage(20),
                 Constraint::Percentage(10),
                 Constraint::Percentage(15),
                 Constraint::Percentage(40),
             ])
-            .split(main_layout[1]);
-        return (left_side[0], left_side[1], right_side[0], right_side[1], right_side[2], right_side[3], right_side[4]);
+            .split(right_side);
+        let network_area = chunks[0];
+        let disk_io = chunks[1];
+        let mem_area = chunks[2];
+        let disk_area = chunks[3];
+        let temperature_area = chunks[4];
+        
+        return (
+            info_area,
+            process_area,
+            cpu_area, 
+            network_area, 
+            disk_io,
+            mem_area,
+            disk_area, 
+            temperature_area,
+        );
     }
     
     fn next_row(&mut self) {
