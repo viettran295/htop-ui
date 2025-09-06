@@ -2,8 +2,10 @@ mod config;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal};
+use sysinfo::System;
+use tokio::sync::Mutex;
 use std::{
-    sync::mpsc::{self, Receiver, Sender}, time::{Duration, Instant}
+    sync::{mpsc::{self, Receiver, Sender}, Arc}, time::{Duration, Instant}
 };
 
 use crate::{
@@ -79,11 +81,12 @@ impl App {
     }
 
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
-        list_all_processes(self.tx.clone());
+        let sys = Arc::new(Mutex::new(System::new_all()));
+        list_all_processes(self.tx.clone(), Arc::clone(&sys));
         get_network_info(self.tx.clone());
         get_disk_usage(self.tx.clone());
         get_temperature(self.tx.clone());
-        get_general_info(self.tx.clone());
+        get_general_info(self.tx.clone(), Arc::clone(&sys));
         while ! self.exit {
             if let Ok(msg) = self.rx.try_recv(){
                 match msg {

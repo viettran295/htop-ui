@@ -4,11 +4,11 @@ pub mod disk;
 pub mod temperature;
 mod utils;
 
-use tokio;
+use tokio::{self, sync::Mutex};
 use std::{
-    collections::HashMap, sync::mpsc::Sender, time::Duration
+    collections::HashMap, sync::{mpsc::Sender, Arc}, time::Duration
 };
-use sysinfo::{Components, Disks, ProcessStatus, System, Users, MINIMUM_CPU_UPDATE_INTERVAL};
+use sysinfo::{Components, Disks, ProcessStatus, System, Users};
 
 use crate::cmd::{disk::Disk, network::Network, temperature::Temperature, utils::seconds_to_timestamp};
 
@@ -22,15 +22,12 @@ pub enum Message {
     GeneralInfo(Vec<String>),
 }
 
-pub fn list_all_processes(tx: Sender<Message>){
-    let mut sys = System::new_all();
-    let users = Users::new_with_refreshed_list();
-    let total_mem = sys.total_memory();
-
+pub fn list_all_processes(tx: Sender<Message>, sys: Arc<Mutex<sysinfo::System>>){
     tokio::spawn(async move {
-        sys.refresh_all();
-        tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
+        let users = Users::new_with_refreshed_list();
         loop {
+            let mut sys = sys.lock().await;
+            let total_mem = sys.total_memory();
             sys.refresh_all();
             let mut vec_proc: Vec<process::Process> = Vec::new();
             let total_mem_usage = (sys.used_memory() as f32 / total_mem as f32) * 100.0;
@@ -124,11 +121,10 @@ pub fn get_temperature(tx: Sender<Message>) {
     });
 }
 
-pub fn get_general_info(tx: Sender<Message>) {
-    let mut sys = System::new_all();
-
+pub fn get_general_info(tx: Sender<Message>, sys: Arc<Mutex<sysinfo::System>>) {
     tokio::spawn(async move {
         loop {
+            let mut sys = sys.lock().await;
             sys.refresh_all();
             let mut message: Vec<String> = Vec::new();
             let mut status_counts: HashMap<ProcessStatus, u32> = HashMap::new();
