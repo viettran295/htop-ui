@@ -8,16 +8,17 @@ use tokio::{self, sync::Mutex};
 use std::{
     collections::HashMap, sync::{mpsc::Sender, Arc}, time::Duration
 };
-use sysinfo::{Components, Disks, ProcessStatus, System, Users};
+use sysinfo::{Components, DiskUsage, Disks, ProcessStatus, System, Users};
 
 use crate::cmd::{disk::Disk, network::Network, temperature::Temperature, utils::seconds_to_timestamp};
 
 pub enum Message {
     Processes(Vec<process::Process>),
     Network(network::Network),
-    CPUUsage(Vec<f32>),
-    MEMUsage(f32),
+    CpuUsage(Vec<f32>),
+    MemUsage(f32),
     DiskUsage(Vec<Disk>),
+    DiskIO(DiskUsage),
     Temperature(Vec<Temperature>),
     GeneralInfo(Vec<String>),
 }
@@ -49,7 +50,7 @@ pub fn list_all_processes(tx: Sender<Message>, sys: Arc<Mutex<sysinfo::System>>)
                 vec_proc.push(proc);
             }
             tx.send(Message::Processes(vec_proc)).unwrap();
-            tx.send(Message::MEMUsage(total_mem_usage)).unwrap();
+            tx.send(Message::MemUsage(total_mem_usage)).unwrap();
             utils::send_cores_usage(&tx, &sys);
             
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -94,6 +95,22 @@ pub fn get_disk_usage(tx: Sender<Message>) {
          disks.push(disk);
      }
      tx.send(Message::DiskUsage(disks)).unwrap();
+}
+
+pub fn get_disk_io(tx: Sender<Message>, sys: Arc<Mutex<sysinfo::System>>) {
+    tokio::spawn(async move {
+        loop {
+            let mut sys = sys.lock().await;
+            sys.refresh_all();
+            let mut disk_io = DiskUsage::default();
+            for  (_, proc) in sys.processes() {
+                disk_io.read_bytes += proc.disk_usage().read_bytes;
+                disk_io.written_bytes += proc.disk_usage().written_bytes;
+            }
+            tx.send(Message::DiskIO(disk_io)).unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
 }
 
 pub fn get_temperature(tx: Sender<Message>) {

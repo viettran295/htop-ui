@@ -8,7 +8,7 @@ pub fn send_cores_usage(tx: &Sender<Message>, sys: &System) {
     for cpu in sys.cpus().iter() {
         usages.push(cpu.cpu_usage());
     }
-    tx.send(Message::CPUUsage(usages)).unwrap();
+    tx.send(Message::CpuUsage(usages)).unwrap();
 }
 
 pub fn seconds_to_timestamp(total_seconds: u64) -> String {

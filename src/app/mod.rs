@@ -2,7 +2,7 @@ mod config;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*, DefaultTerminal};
-use sysinfo::System;
+use sysinfo::{DiskUsage, System};
 use tokio::sync::Mutex;
 use std::{
     sync::{mpsc::{self, Receiver, Sender}, Arc}, time::{Duration, Instant}
@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     app::config::AppConfig,
-    cmd::{disk::Disk, get_disk_usage, get_general_info, get_network_info, get_temperature, list_all_processes, network::Network, process, temperature::Temperature, Message}
+    cmd::{disk::Disk, get_disk_io, get_disk_usage, get_general_info, get_network_info, get_temperature, list_all_processes, network::Network, process, temperature::Temperature, Message}
 };
 
 struct AppStyle {
@@ -19,6 +19,7 @@ struct AppStyle {
     cpu_frame_fg: Color,
     mem_frame_fg: Color,
     disk_frame_fg: Color,
+    disk_io_frame_fg: Color,
     temperature_fg: Color,
     net_frame_fg: Color,
     selected_row: Color,
@@ -34,6 +35,7 @@ pub struct App {
     cores_usage: Vec<f32>,
     mem_usage: f32,
     disks_usage: Vec<Disk>,
+    disk_io: DiskUsage,
     temperatures: Vec<Temperature>,
     state: TableState,
     style: AppStyle,
@@ -54,6 +56,7 @@ impl App {
             cpu_frame_fg: tailwind::YELLOW.c300,
             mem_frame_fg: tailwind::PURPLE.c300,
             disk_frame_fg: tailwind::INDIGO.c300,
+            disk_io_frame_fg: tailwind::CYAN.c300,
             temperature_fg: tailwind::ROSE.c300,
             net_frame_fg: tailwind::GREEN.c300,
             selected_row: tailwind::ZINC.c100,
@@ -69,6 +72,7 @@ impl App {
             cores_usage: Vec::new(),
             mem_usage: 0.0,
             disks_usage: Vec::new(),
+            disk_io: DiskUsage::default(),
             temperatures: Vec::new(),
             state: TableState::default().with_selected(0),
             style: app_style,
@@ -85,6 +89,7 @@ impl App {
         list_all_processes(self.tx.clone(), Arc::clone(&sys));
         get_network_info(self.tx.clone());
         get_disk_usage(self.tx.clone());
+        get_disk_io(self.tx.clone(), Arc::clone(&sys));
         get_temperature(self.tx.clone());
         get_general_info(self.tx.clone(), Arc::clone(&sys));
         while ! self.exit {
@@ -95,10 +100,10 @@ impl App {
                         process::Process::sort_most_consume_cpu(&mut processes);
                         self.update_processes(processes);
                     }
-                    Message::CPUUsage(cpu_usage) => {
+                    Message::CpuUsage(cpu_usage) => {
                         self.cores_usage = cpu_usage;
                     }
-                    Message::MEMUsage(mem_usage) => {
+                    Message::MemUsage(mem_usage) => {
                         self.mem_usage = mem_usage;
                     }
                     Message::Network(net_data) => {
@@ -106,6 +111,9 @@ impl App {
                     }
                     Message::DiskUsage(disk_data) => {
                         self.disks_usage = disk_data;
+                    }
+                    Message::DiskIO(disk_io) => {
+                        self.disk_io = disk_io;
                     }
                     Message::Temperature(temp) => {
                         self.temperatures = temp;
@@ -154,15 +162,16 @@ impl App {
             process_area, 
             cpu_area, 
             network_area, 
-            disk_io,
+            disk_io_area,
             mem_area,
             disk_area, 
             temperature_area,
         ) = Self::create_layout(frame);
-        self.render_widgets(frame, cpu_area, mem_area, network_area, disk_area);
+        self.render_widgets(frame, cpu_area, mem_area, network_area, disk_area, disk_io_area);
         self.render_general_info(frame, info_area);
         self.render_processes_table(frame, process_area);
         self.render_cpu_usage(frame, cpu_area);
+        self.render_disk_io(frame, disk_io_area);
         self.render_mem_usage(frame, mem_area);
         self.render_network(frame, network_area);
         self.render_disks_usage(frame, disk_area);
@@ -222,6 +231,46 @@ impl App {
         frame.render_widget(bar_chart, area);
     }
     
+    fn render_disk_io(&self, frame: &mut Frame, area: Rect) {
+        let title = Line::from("Read / Write").centered();
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(3))
+            .title(title);
+        let bar_style = Style::default()
+            .fg(self.style.disk_io_frame_fg)
+            .bg(Color::DarkGray);
+        let text_style = Style::default()
+            .fg(tailwind::BLACK)
+            .bg(self.style.disk_io_frame_fg);
+        let read_mbs = self.disk_io.read_bytes / 1024;
+        let write_mbs = self.disk_io.written_bytes / 1024;
+        let bars = vec![ 
+            Bar::default()
+                .value(read_mbs)
+                .value_style(Style::default().bg(self.style.disk_io_frame_fg))
+                .text_value(format!("{} Kb/s", read_mbs))
+                .value_style(text_style)
+                .label(Line::from("Read"))
+                .style(bar_style),
+            Bar::default()
+                .value(write_mbs)
+                .value_style(Style::default().bg(self.style.disk_io_frame_fg))
+                .text_value(format!("{} Kb/s", write_mbs))
+                .value_style(text_style)
+                .label(Line::from("Write"))
+                .style(bar_style),
+        ];
+        
+        let bar_chart = BarChart::default()
+            .block(block)
+            .data(BarGroup::default().bars(&bars))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .max(1_000_000);
+        frame.render_widget(bar_chart, area);
+    }
+    
     fn render_mem_usage(&self, frame: &mut Frame, area: Rect) {
         let title = Line::from("Memory usage").centered();
         let block = Block::new()
@@ -264,7 +313,7 @@ impl App {
             let total_space_gb = disk.total_space / 1_000_000_000;
             bars.push(
                 Bar::default()
-                    .value(disk.percent_used_space()as u64)
+                    .value(disk.percent_used_space() as u64)
                     .value_style(Style::default().bg(self.style.mem_frame_fg))
                     .text_value(format!("{}% of {}GB", disk.percent_used_space(), total_space_gb))
                     .value_style(text_style)
@@ -413,7 +462,8 @@ impl App {
         cpu_area: Rect,
         ram_area: Rect,
         net_area: Rect,
-        disk_area: Rect
+        disk_area: Rect,
+        disk_io_area: Rect,
     ) {
         frame.render_widget(
             Paragraph::new("")
@@ -447,6 +497,14 @@ impl App {
                         .borders(Borders::all())), 
             disk_area
         );
+        frame.render_widget(
+            Paragraph::new("")
+                .block(Block::new()
+                        .title_alignment(Alignment::Center)
+                        .fg(self.style.disk_io_frame_fg)
+                        .borders(Borders::all())), 
+            disk_io_area
+        );
     }
     
     fn create_layout(frame: &mut Frame) -> (Rect, Rect, Rect, Rect, Rect, Rect, Rect, Rect) {
@@ -476,10 +534,10 @@ impl App {
             .direction(Direction::Vertical)
             .constraints(vec![
                 Constraint::Percentage(15),
-                Constraint::Percentage(20),
+                Constraint::Percentage(15),
                 Constraint::Percentage(10),
                 Constraint::Percentage(15),
-                Constraint::Percentage(40),
+                Constraint::Percentage(45),
             ])
             .split(right_side);
         let network_area = chunks[0];
